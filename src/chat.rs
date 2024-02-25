@@ -19,12 +19,6 @@ pub struct ChatMessage {
     pub message: String,
 }
 
-impl Default for Chat {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Chat {
     pub fn new() -> Self {
         let mut controller = Controller::new();
@@ -36,6 +30,14 @@ impl Chat {
             output,
             config,
         }
+    }
+
+    pub async fn init(&mut self) -> &mut Self {
+        if let Ok(config) = Config::load().await {
+            println!("Loaded config");
+            self.config = config;
+        }
+        self
     }
 
     pub async fn send(&self, chat_message: String) {
