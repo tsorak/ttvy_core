@@ -38,6 +38,10 @@ impl Chat {
         }
     }
 
+    pub async fn send(&self, chat_message: String) {
+        self.controller.send(chat_message).await;
+    }
+
     pub async fn receive(&mut self) -> ChatMessage {
         loop {
             match self.output.recv().await {

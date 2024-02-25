@@ -57,6 +57,13 @@ impl Controller {
         }
     }
 
+    pub async fn send(&self, chat_message: String) {
+        let lock = self.websocket_tx.lock().await;
+        if let Some(tx) = lock.as_ref() {
+            let _ = tx.send(chat_message).await;
+        }
+    }
+
     ///
     /// Can only be called once, eg only the first call returns `Some`.
     ///
