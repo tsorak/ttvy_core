@@ -2,37 +2,14 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use fast_websocket_client as ws;
 
-use super::chat_controller::Controller;
+use super::chat_controller::{ConnectConfig, Controller};
 use super::config::Config;
 
 #[derive(Debug)]
 pub struct Chat {
-    pub controller: Controller,
+    controller: Controller,
+    output: Receiver<ChatMessage>,
     pub config: Config,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ConnectConfig {
-    pub channel: Option<String>,
-    oauth: Option<String>,
-    nick: Option<String>,
-}
-
-impl From<Config> for ConnectConfig {
-    fn from(value: Config) -> Self {
-        let Config {
-            channel,
-            oauth,
-            nick,
-            ..
-        } = value;
-
-        Self {
-            channel,
-            oauth,
-            nick,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -50,15 +27,43 @@ impl Default for Chat {
 
 impl Chat {
     pub fn new() -> Self {
+        let mut controller = Controller::new();
+        let output = controller.take_receiver().unwrap();
         let config = Config::default();
+
         Self {
-            controller: Controller::new(),
+            controller,
+            output,
             config,
         }
     }
 
-    pub fn controller(&mut self) -> &mut Controller {
-        &mut self.controller
+    pub async fn receive(&mut self) -> ChatMessage {
+        loop {
+            match self.output.recv().await {
+                Some(msg) => return msg,
+                None => {
+                    eprintln!("Encountered empty message");
+                }
+            }
+        }
+    }
+
+    pub fn join(&mut self, channel: &str) {
+        self.config.channel.replace(channel.to_string());
+        self.controller.join(self.config.clone().into());
+    }
+
+    pub fn leave(&mut self) {
+        self.controller.leave();
+    }
+
+    pub fn reconnect(&mut self) {
+        if self.config.channel.is_some() {
+            self.controller.join(self.config.clone().into());
+        } else {
+            println!("No recently joined channel to reconnect to");
+        }
     }
 
     pub async fn fetch_auth_token(&mut self) -> &mut Self {

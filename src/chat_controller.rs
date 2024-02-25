@@ -4,7 +4,32 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use super::chat::{connect, ChatMessage, ConnectConfig};
+use super::chat::{connect, ChatMessage};
+use super::config::Config;
+
+#[derive(Debug, Clone, Default)]
+pub struct ConnectConfig {
+    pub channel: Option<String>,
+    pub oauth: Option<String>,
+    pub nick: Option<String>,
+}
+
+impl From<Config> for ConnectConfig {
+    fn from(value: Config) -> Self {
+        let Config {
+            channel,
+            oauth,
+            nick,
+            ..
+        } = value;
+
+        Self {
+            channel,
+            oauth,
+            nick,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Controller {
