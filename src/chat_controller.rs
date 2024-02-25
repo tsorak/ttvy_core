@@ -106,6 +106,7 @@ impl Controller {
                 let (websocket_tx, outgoing_rx) = channel::<String>(128);
                 let mut controller_websocket_tx = controller_websocket_tx.lock().await;
                 *controller_websocket_tx = Some(websocket_tx);
+                drop(controller_websocket_tx);
 
                 let proxy = spawn_proxy_worker(incoming_rx, &proxy_tx);
                 let _result =
