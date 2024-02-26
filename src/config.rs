@@ -45,7 +45,10 @@ impl Config {
 
         let save_dir = Self::get_save_dir();
         let _ = tokio::fs::create_dir_all(save_dir.parent().unwrap()).await;
-        let _ = tokio::fs::write(&save_dir, data).await;
+        match tokio::fs::write(&save_dir, data).await {
+            Ok(_) => println!("Saved config"),
+            Err(_) => eprintln!("Failed to save config"),
+        }
     }
 
     pub fn set_initial_channel(&mut self) {
