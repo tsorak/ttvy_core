@@ -1,4 +1,5 @@
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::oneshot;
 
 use fast_websocket_client as ws;
 
@@ -60,8 +61,9 @@ impl Chat {
         self.controller.join(self.config.clone().into());
     }
 
-    pub fn leave(&mut self) {
-        self.controller.leave();
+    pub async fn leave(&mut self) {
+        self.controller.leave().await;
+        println!("Disconnected");
     }
 
     pub fn reconnect(&mut self) {
@@ -87,6 +89,7 @@ pub(super) async fn connect(
     connect_config: ConnectConfig,
     incoming_message_tx: Sender<ChatMessage>,
     mut outgoing_message_rx: Receiver<String>,
+    mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     {
         let ConnectConfig {
@@ -159,6 +162,9 @@ pub(super) async fn connect(
                         let fmt = format!("PRIVMSG #{} :{}", &channel, &msg);
                         let _ = conn.send_string(&fmt).await;
                     }
+                }
+                _ = &mut shutdown_rx => {
+                    break;
                 }
             };
         }

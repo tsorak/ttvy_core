@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -37,6 +38,7 @@ pub struct Controller {
     proxy_rx: Option<Receiver<ChatMessage>>,
     websocket_tx: Arc<Mutex<Option<Sender<String>>>>,
     handle: Option<JoinHandle<()>>,
+    chat_shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl Default for Controller {
@@ -54,6 +56,7 @@ impl Controller {
             proxy_rx: Some(rx),
             websocket_tx: Arc::new(Mutex::new(None)),
             handle: None,
+            chat_shutdown_tx: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -82,9 +85,13 @@ impl Controller {
         }
     }
 
-    pub fn leave(&mut self) -> &mut Self {
+    pub async fn leave(&mut self) -> &mut Self {
         if let Some(handle) = self.handle.take() {
+            let mut lock = self.chat_shutdown_tx.lock().await;
             handle.abort();
+            if let Some(shutdown_tx) = lock.take() {
+                let _ = shutdown_tx.send(());
+            }
         }
 
         self
@@ -93,9 +100,15 @@ impl Controller {
     fn supervise(&mut self, connect_config: ConnectConfig) -> &mut Self {
         let controller_websocket_tx = self.websocket_tx.clone();
         let proxy_tx = self.proxy_tx.clone();
+        let shutdown_mutex = self.chat_shutdown_tx.clone();
 
         let handle = tokio::spawn(async move {
             loop {
+                let (shutdown_tx, shutdown_rx) = oneshot::channel();
+                let mut lock = shutdown_mutex.lock().await;
+                lock.replace(shutdown_tx);
+                drop(lock);
+
                 let connect_config = connect_config.clone();
                 //setup proxy channel for receiving messages from websocket
                 // ttvy_core <-- websocket <-- (twitch server)
@@ -109,11 +122,11 @@ impl Controller {
                 drop(controller_websocket_tx);
 
                 let proxy = spawn_proxy_worker(incoming_rx, &proxy_tx);
-                let _result =
-                    tokio::spawn(
-                        async move { connect(connect_config, incoming_tx, outgoing_rx).await },
-                    )
-                    .await;
+                let _result = tokio::spawn(async move {
+                    connect(connect_config, incoming_tx, outgoing_rx, shutdown_rx).await
+                })
+                .await;
+
                 proxy.abort();
             }
         });
