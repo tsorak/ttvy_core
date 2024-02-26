@@ -3,7 +3,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use fast_websocket_client as ws;
 
 use super::chat_controller::{ConnectConfig, Controller};
-use super::config::Config;
+pub use super::config::Config;
 
 #[derive(Debug)]
 pub struct Chat {
