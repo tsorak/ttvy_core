@@ -20,8 +20,8 @@ pub struct ChatMessage {
     pub message: String,
 }
 
-impl Chat {
-    pub fn new() -> Self {
+impl Default for Chat {
+    fn default() -> Self {
         let mut controller = Controller::new();
         let output = controller.take_receiver().unwrap();
         let config = Config::default();
@@ -31,6 +31,12 @@ impl Chat {
             output,
             config,
         }
+    }
+}
+
+impl Chat {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub async fn init(&mut self) -> &mut Self {
