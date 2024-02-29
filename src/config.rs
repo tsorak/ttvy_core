@@ -78,12 +78,12 @@ mod http {
     };
 
     use tokio::{
-        fs::File,
-        io::AsyncReadExt,
         process::Command,
         sync::mpsc::{channel, Receiver, Sender},
         task::JoinHandle,
     };
+
+    use rust_embed::RustEmbed;
 
     use serde::{Deserialize, Serialize};
 
@@ -91,6 +91,10 @@ mod http {
     struct TokenBody {
         pub token: String,
     }
+
+    #[derive(RustEmbed)]
+    #[folder = "static/"]
+    struct Asset;
 
     pub async fn get_ttv_token() -> String {
         let api_url: String = "https://id.twitch.tv/oauth2/authorize?\
@@ -148,14 +152,12 @@ mod http {
     }
 
     async fn serve_static_file(path: &str) -> String {
-        let mut file = File::open(path).await.unwrap();
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).await.unwrap();
-        contents
+        let file = Asset::get(path).unwrap();
+        std::str::from_utf8(file.data.as_ref()).unwrap().into()
     }
 
     async fn serve_index() -> impl IntoResponse {
-        let mut res = serve_static_file("web/index.html").await.into_response();
+        let mut res = serve_static_file("index.html").await.into_response();
 
         res.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -166,7 +168,7 @@ mod http {
     }
 
     async fn serve_script() -> impl IntoResponse {
-        let mut res = serve_static_file("web/script.js").await.into_response();
+        let mut res = serve_static_file("script.js").await.into_response();
 
         res.headers_mut().insert(
             header::CONTENT_TYPE,
