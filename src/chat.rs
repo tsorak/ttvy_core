@@ -116,7 +116,7 @@ pub(super) async fn connect(
             nick.get_or_insert_with(|| "justinfan354678".to_string())
         );
 
-        let mut conn = ws::connect("ws://irc-ws.chat.twitch.tv:80").await.unwrap();
+        let mut conn = ws::connect("wss://irc-ws.chat.twitch.tv:443").await.unwrap();
         conn.set_auto_pong(true);
 
         conn.send_string(&oauth).await.unwrap();
