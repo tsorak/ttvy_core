@@ -122,7 +122,7 @@ pub(super) async fn connect(
         conn.send_string(&oauth).await.unwrap();
         conn.send_string(&nick).await.unwrap();
         conn.send_string(&join).await.unwrap();
-        conn.send_string("CAP REQ :twitch.tv/tags").await.unwrap();
+        conn.send_string("CAP REQ :twitch.tv/tags twitch.tv/commands").await.unwrap();
 
         let mut read_tags_allowed = false;
         let mut last_sent_message = String::new();
