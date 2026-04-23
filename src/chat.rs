@@ -41,7 +41,7 @@ impl Chat {
 
     pub async fn init(&mut self) -> &mut Self {
         if let Ok(config) = Config::load().await {
-            println!("Loaded config (~/.ttvy_core/state.json)");
+            println!("Loaded config (~/.config/ttvy/state.json)");
             self.config = config;
         }
         self

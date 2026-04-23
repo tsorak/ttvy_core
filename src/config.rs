@@ -26,9 +26,11 @@ impl Config {
     }
 
     fn get_save_dir() -> PathBuf {
-        let mut save_dir = env::var("HOME").expect("Failed to get HOME");
-        save_dir.push_str("/.ttvy_core/state.json");
-        PathBuf::from_str(&save_dir).unwrap()
+        let base = env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = env::var("HOME").expect("Failed to get HOME");
+            format!("{}/.config", home)
+        });
+        PathBuf::from_str(&format!("{}/ttvy/state.json", base)).unwrap()
     }
 
     pub async fn load() -> Result<Self, tokio::io::Error> {
@@ -46,8 +48,8 @@ impl Config {
         let save_dir = Self::get_save_dir();
         let _ = tokio::fs::create_dir_all(save_dir.parent().unwrap()).await;
         match tokio::fs::write(&save_dir, data).await {
-            Ok(_) => println!("Saved config (~/.ttvy_core/state.json)"),
-            Err(_) => eprintln!("Failed to save config (~/.ttvy_core/state.json)"),
+            Ok(_) => println!("Saved config (~/.config/ttvy/state.json)"),
+            Err(_) => eprintln!("Failed to save config (~/.config/ttvy/state.json)"),
         }
     }
 
