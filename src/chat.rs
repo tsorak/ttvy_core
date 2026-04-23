@@ -141,6 +141,11 @@ pub(super) async fn connect(
                                     .collect::<String>()
                             };
 
+                            if msg.starts_with("PING") {
+                                let _ = conn.send_string("PONG").await;
+                                continue;
+                            }
+
                             handle_websocket_message(&incoming_message_tx, msg, &mut read_tags_allowed).await;
                         }
                         Err(e) => {
