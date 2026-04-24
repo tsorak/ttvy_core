@@ -126,6 +126,7 @@ pub(super) async fn connect(
 
         let mut read_tags_allowed = false;
         let mut last_sent_message = String::new();
+        let mut pending_echo: Option<String> = None;
         println!("Joined channel #{}", &channel);
         loop {
             tokio::select! {
@@ -146,7 +147,7 @@ pub(super) async fn connect(
                                 continue;
                             }
 
-                            handle_websocket_message(&incoming_message_tx, msg, &mut read_tags_allowed).await;
+                            handle_websocket_message(&incoming_message_tx, msg, &mut read_tags_allowed, &mut pending_echo).await;
                         }
                         Err(e) => {
                             println!("{}", e);
@@ -170,6 +171,8 @@ pub(super) async fn connect(
 
                         last_sent_message = msg.clone();
 
+                        pending_echo = Some(msg.strip_suffix(" \u{E0000}").unwrap_or(&msg).to_string());
+
                         let fmt = format!("PRIVMSG #{} :{}", &channel, &msg);
                         let _ = conn.send_string(&fmt).await;
                     }
@@ -186,10 +189,21 @@ async fn handle_websocket_message(
     incoming_message_tx: &Sender<ChatMessage>,
     msg: String,
     read_tags_allowed: &mut bool,
+    pending_echo: &mut Option<String>,
 ) {
     match msg {
         m if m.contains("ACK :twitch.tv/tags") => {
             *read_tags_allowed = true;
+        }
+        m if *read_tags_allowed && m.contains("USERSTATE") => {
+            if let Some(body) = pending_echo.take() {
+                if let Some(user_message) = parse::format_own_message(&m, body) {
+                    incoming_message_tx
+                        .send(user_message)
+                        .await
+                        .expect("Controller proxy should be set up");
+                }
+            }
         }
         m if *read_tags_allowed && m.contains("PRIVMSG") => {
             if let Some(user_message) = parse::format_user_message_with_tags(&m) {
@@ -269,6 +283,21 @@ mod parse {
             author,
             color,
             message: message.to_owned(),
+        })
+    }
+
+    pub fn format_own_message(str: &str, body: String) -> Option<ChatMessage> {
+        let head = str.split_once("\r\n").map(|(h, _)| h).unwrap_or(str);
+        let (tags, _) = head.split_once(" :")?;
+        let tags = parse_tags(tags);
+
+        let author = tags.get("display-name")?.to_string();
+        let color = tags.get("color").map(|c| c.to_string());
+
+        Some(ChatMessage {
+            author,
+            color,
+            message: body,
         })
     }
 
