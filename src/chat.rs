@@ -9,8 +9,14 @@ pub use super::config::Config;
 #[derive(Debug)]
 pub struct Chat {
     controller: Controller,
-    output: Receiver<ChatMessage>,
+    output: Receiver<ChatEvent>,
     pub config: Config,
+}
+
+#[derive(Debug)]
+pub enum ChatEvent {
+    Message(ChatMessage),
+    System(String),
 }
 
 #[derive(Debug)]
@@ -41,8 +47,9 @@ impl Chat {
 
     pub async fn init(&mut self) -> &mut Self {
         if let Ok(config) = Config::load().await {
-            println!("Loaded config (~/.config/ttvy/state.json)");
             self.config = config;
+            self.emit_system("Loaded config (~/.config/ttvy/state.json)")
+                .await;
         }
         self
     }
@@ -51,15 +58,11 @@ impl Chat {
         self.controller.send(chat_message).await;
     }
 
-    pub async fn receive(&mut self) -> ChatMessage {
-        loop {
-            match self.output.recv().await {
-                Some(msg) => return msg,
-                None => {
-                    eprintln!("Encountered empty message");
-                }
-            }
-        }
+    pub async fn receive(&mut self) -> ChatEvent {
+        self.output
+            .recv()
+            .await
+            .unwrap_or_else(|| ChatEvent::System("Chat stream closed".to_string()))
     }
 
     pub fn join(&mut self, channel: &str) {
@@ -69,31 +72,51 @@ impl Chat {
 
     pub async fn leave(&mut self) {
         self.controller.leave().await;
-        println!("Disconnected");
+        self.emit_system("Disconnected").await;
     }
 
-    pub fn reconnect(&mut self) {
+    pub async fn reconnect(&mut self) {
         if self.config.channel.is_some() {
             self.controller.join(self.config.clone().into());
         } else {
-            println!("No recently joined channel to reconnect to");
+            self.emit_system("No recently joined channel to reconnect to")
+                .await;
+        }
+    }
+
+    pub async fn save(&self) {
+        match self.config.save().await {
+            Ok(_) => {
+                self.emit_system("Saved config (~/.config/ttvy/state.json)")
+                    .await
+            }
+            Err(_) => {
+                self.emit_system("Failed to save config (~/.config/ttvy/state.json)")
+                    .await
+            }
         }
     }
 
     pub async fn fetch_auth_token(&mut self) -> &mut Self {
-        Config::fetch_auth_token(&mut self.config).await;
+        let events = self.controller.event_sender();
+        Config::fetch_auth_token(&mut self.config, &events).await;
+        self.emit_system("Authtoken has been set!").await;
         self
+    }
+
+    async fn emit_system(&self, msg: impl Into<String>) {
+        self.controller.emit_system(msg.into()).await;
     }
 }
 
 ///
-/// `incoming_message_tx` is a sender of messages. The websocket will transmit its incoming
-/// messages over this Sender.
+/// `incoming_event_tx` is a sender of events. The websocket will transmit its incoming
+/// messages and status updates over this Sender.
 /// `outgoing_message_rx` is a receiver of messages transmitted by users of this library
 ///
 pub(super) async fn connect(
     connect_config: ConnectConfig,
-    incoming_message_tx: Sender<ChatMessage>,
+    incoming_event_tx: Sender<ChatEvent>,
     mut outgoing_message_rx: Receiver<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -116,18 +139,24 @@ pub(super) async fn connect(
             nick.get_or_insert_with(|| "justinfan354678".to_string())
         );
 
-        let mut conn = ws::connect("wss://irc-ws.chat.twitch.tv:443").await.unwrap();
+        let mut conn = ws::connect("wss://irc-ws.chat.twitch.tv:443")
+            .await
+            .unwrap();
         conn.set_auto_pong(true);
 
         conn.send_string(&oauth).await.unwrap();
         conn.send_string(&nick).await.unwrap();
         conn.send_string(&join).await.unwrap();
-        conn.send_string("CAP REQ :twitch.tv/tags twitch.tv/commands").await.unwrap();
+        conn.send_string("CAP REQ :twitch.tv/tags twitch.tv/commands")
+            .await
+            .unwrap();
 
         let mut read_tags_allowed = false;
         let mut last_sent_message = String::new();
         let mut pending_echo: Option<String> = None;
-        println!("Joined channel #{}", &channel);
+        let _ = incoming_event_tx
+            .send(ChatEvent::System(format!("Joined channel #{}", &channel)))
+            .await;
         loop {
             tokio::select! {
                 res = conn.receive_frame() => {
@@ -147,10 +176,12 @@ pub(super) async fn connect(
                                 continue;
                             }
 
-                            handle_websocket_message(&incoming_message_tx, msg, &mut read_tags_allowed, &mut pending_echo).await;
+                            handle_websocket_message(&incoming_event_tx, msg, &mut read_tags_allowed, &mut pending_echo).await;
                         }
                         Err(e) => {
-                            println!("{}", e);
+                            let _ = incoming_event_tx
+                                .send(ChatEvent::System(format!("{}", e)))
+                                .await;
                             break;
                         }
                     }
@@ -186,7 +217,7 @@ pub(super) async fn connect(
 }
 
 async fn handle_websocket_message(
-    incoming_message_tx: &Sender<ChatMessage>,
+    incoming_event_tx: &Sender<ChatEvent>,
     msg: String,
     read_tags_allowed: &mut bool,
     pending_echo: &mut Option<String>,
@@ -198,8 +229,8 @@ async fn handle_websocket_message(
         m if *read_tags_allowed && m.contains("USERSTATE") => {
             if let Some(body) = pending_echo.take() {
                 if let Some(user_message) = parse::format_own_message(&m, body) {
-                    incoming_message_tx
-                        .send(user_message)
+                    incoming_event_tx
+                        .send(ChatEvent::Message(user_message))
                         .await
                         .expect("Controller proxy should be set up");
                 }
@@ -207,22 +238,22 @@ async fn handle_websocket_message(
         }
         m if *read_tags_allowed && m.contains("PRIVMSG") => {
             if let Some(user_message) = parse::format_user_message_with_tags(&m) {
-                incoming_message_tx
-                    .send(user_message)
+                incoming_event_tx
+                    .send(ChatEvent::Message(user_message))
                     .await
                     .expect("Controller proxy should be set up")
             }
         }
         m if m.contains("PRIVMSG") => {
             if let Some(user_message) = parse::format_user_message(&m) {
-                incoming_message_tx
-                    .send(user_message)
+                incoming_event_tx
+                    .send(ChatEvent::Message(user_message))
                     .await
                     .expect("Controller proxy should be set up");
             }
         }
         m => {
-            println!("{}", &m);
+            let _ = incoming_event_tx.send(ChatEvent::System(m)).await;
         }
     }
 }

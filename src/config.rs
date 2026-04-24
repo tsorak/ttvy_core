@@ -2,6 +2,9 @@ use std::{env, path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tokio::sync::mpsc::Sender;
+
+use super::chat::ChatEvent;
 
 type TTVChannel = String;
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -42,15 +45,12 @@ impl Config {
         }
     }
 
-    pub async fn save(&self) {
+    pub async fn save(&self) -> Result<(), tokio::io::Error> {
         let data = serde_json::json!(self).to_string();
 
         let save_dir = Self::get_save_dir();
         let _ = tokio::fs::create_dir_all(save_dir.parent().unwrap()).await;
-        match tokio::fs::write(&save_dir, data).await {
-            Ok(_) => println!("Saved config (~/.config/ttvy/state.json)"),
-            Err(_) => eprintln!("Failed to save config (~/.config/ttvy/state.json)"),
-        }
+        tokio::fs::write(&save_dir, data).await
     }
 
     pub fn set_initial_channel(&mut self) {
@@ -61,10 +61,9 @@ impl Config {
         }
     }
 
-    pub async fn fetch_auth_token(&mut self) -> &mut Self {
-        let token = http::get_ttv_token().await;
+    pub async fn fetch_auth_token(&mut self, events: &Sender<ChatEvent>) -> &mut Self {
+        let token = http::get_ttv_token(events).await;
         let _ = self.oauth.insert(token);
-        println!("Authtoken has been set!");
         self
     }
 }
@@ -89,6 +88,8 @@ mod http {
 
     use serde::{Deserialize, Serialize};
 
+    use crate::chat::ChatEvent;
+
     #[derive(Serialize, Deserialize, Debug)]
     struct TokenBody {
         pub token: String,
@@ -98,7 +99,7 @@ mod http {
     #[folder = "static/"]
     struct Asset;
 
-    pub async fn get_ttv_token() -> String {
+    pub async fn get_ttv_token(events: &Sender<ChatEvent>) -> String {
         let api_url: String = "https://id.twitch.tv/oauth2/authorize?\
             response_type=token\
             &client_id=m0y30jcckwn2a7m7hh0djrg47wvbuk\
@@ -106,12 +107,23 @@ mod http {
             &redirect_uri=http://localhost:4537"
             .to_string();
 
-        println!("Complete authentication at\n{}", &api_url);
+        let _ = events
+            .send(ChatEvent::System(format!(
+                "Complete authentication at {}",
+                &api_url
+            )))
+            .await;
         if open_browser(&api_url).await.is_err() {
-            println!("Failed to open browser automatically, please navigate manually.")
+            let _ = events
+                .send(ChatEvent::System(
+                    "Failed to open browser automatically, please navigate manually.".to_string(),
+                ))
+                .await;
         }
 
-        println!("Waiting for token...");
+        let _ = events
+            .send(ChatEvent::System("Waiting for token...".to_string()))
+            .await;
         let (token_tx, mut token_rx) = channel::<String>(1);
         let (shutdown_tx, shutdown_rx) = channel::<()>(1);
 

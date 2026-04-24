@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use super::chat::{connect, ChatMessage};
+use super::chat::{connect, ChatEvent};
 use super::config::Config;
 
 #[derive(Debug, Clone, Default)]
@@ -34,8 +34,8 @@ impl From<Config> for ConnectConfig {
 
 #[derive(Debug)]
 pub struct Controller {
-    proxy_tx: Sender<ChatMessage>,
-    proxy_rx: Option<Receiver<ChatMessage>>,
+    proxy_tx: Sender<ChatEvent>,
+    proxy_rx: Option<Receiver<ChatEvent>>,
     websocket_tx: Arc<Mutex<Option<Sender<String>>>>,
     handle: Option<JoinHandle<()>>,
     chat_shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
@@ -49,7 +49,7 @@ impl Default for Controller {
 
 impl Controller {
     pub fn new() -> Self {
-        let (tx, rx) = channel::<ChatMessage>(128);
+        let (tx, rx) = channel::<ChatEvent>(128);
 
         Self {
             proxy_tx: tx,
@@ -70,8 +70,16 @@ impl Controller {
     ///
     /// Can only be called once, eg only the first call returns `Some`.
     ///
-    pub fn take_receiver(&mut self) -> Option<Receiver<ChatMessage>> {
+    pub fn take_receiver(&mut self) -> Option<Receiver<ChatEvent>> {
         self.proxy_rx.take()
+    }
+
+    pub fn event_sender(&self) -> Sender<ChatEvent> {
+        self.proxy_tx.clone()
+    }
+
+    pub async fn emit_system(&self, msg: String) {
+        let _ = self.proxy_tx.send(ChatEvent::System(msg)).await;
     }
 
     pub fn join(&mut self, connect_config: ConnectConfig) {
@@ -110,9 +118,9 @@ impl Controller {
                 drop(lock);
 
                 let connect_config = connect_config.clone();
-                //setup proxy channel for receiving messages from websocket
+                //setup proxy channel for receiving events from websocket
                 // ttvy_core <-- websocket <-- (twitch server)
-                let (incoming_tx, incoming_rx) = channel::<ChatMessage>(128);
+                let (incoming_tx, incoming_rx) = channel::<ChatEvent>(128);
 
                 //setup channel for sending messages over websocket
                 // ttvy_core --> websocket --> (twitch server)
@@ -136,7 +144,7 @@ impl Controller {
     }
 }
 
-fn spawn_proxy_worker(mut rx: Receiver<ChatMessage>, tx: &Sender<ChatMessage>) -> JoinHandle<()> {
+fn spawn_proxy_worker(mut rx: Receiver<ChatEvent>, tx: &Sender<ChatEvent>) -> JoinHandle<()> {
     let tx = tx.clone();
 
     tokio::spawn(async move {
